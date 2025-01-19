@@ -1,9 +1,10 @@
 """Support for 1-Wire environment sensors."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-import copy
-from dataclasses import dataclass
+import dataclasses
+from datetime import timedelta
 import logging
 import os
 from types import MappingProxyType
@@ -17,7 +18,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
@@ -32,18 +32,22 @@ from homeassistant.helpers.typing import StateType
 from .const import (
     DEVICE_KEYS_0_3,
     DEVICE_KEYS_A_B,
-    DOMAIN,
     OPTION_ENTRY_DEVICE_OPTIONS,
     OPTION_ENTRY_SENSOR_PRECISION,
     PRECISION_MAPPING_FAMILY_28,
     READ_MODE_FLOAT,
     READ_MODE_INT,
 )
-from .onewire_entities import OneWireEntity, OneWireEntityDescription
-from .onewirehub import OneWireHub
+from .entity import OneWireEntity, OneWireEntityDescription
+from .onewirehub import OneWireConfigEntry, OneWireHub
+
+# the library uses non-persistent connections
+# and concurrent access to the bus is managed by the server
+PARALLEL_UPDATES = 0
+SCAN_INTERVAL = timedelta(seconds=30)
 
 
-@dataclass
+@dataclasses.dataclass(frozen=True)
 class OneWireSensorEntityDescription(OneWireEntityDescription, SensorEntityDescription):
     """Class describing OneWire sensor entities."""
 
@@ -233,13 +237,13 @@ DEVICE_SENSORS: dict[str, tuple[OneWireSensorEntityDescription, ...]] = {
     "42": (SIMPLE_TEMPERATURE_SENSOR_DESCRIPTION,),
     "1D": tuple(
         OneWireSensorEntityDescription(
-            key=f"counter.{id}",
-            native_unit_of_measurement="count",
+            key=f"counter.{device_key}",
             read_mode=READ_MODE_INT,
             state_class=SensorStateClass.TOTAL_INCREASING,
-            translation_key=f"counter_{id.lower()}",
+            translation_key="counter_id",
+            translation_placeholders={"id": str(device_key)},
         )
-        for id in DEVICE_KEYS_A_B
+        for device_key in DEVICE_KEYS_A_B
     ),
 }
 
@@ -272,14 +276,15 @@ HOBBYBOARD_EF: dict[str, tuple[OneWireSensorEntityDescription, ...]] = {
     ),
     "HB_MOISTURE_METER": tuple(
         OneWireSensorEntityDescription(
-            key=f"moisture/sensor.{id}",
+            key=f"moisture/sensor.{device_key}",
             device_class=SensorDeviceClass.PRESSURE,
             native_unit_of_measurement=UnitOfPressure.CBAR,
             read_mode=READ_MODE_FLOAT,
             state_class=SensorStateClass.MEASUREMENT,
-            translation_key=f"moisture_{id}",
+            translation_key="moisture_id",
+            translation_placeholders={"id": str(device_key)},
         )
-        for id in DEVICE_KEYS_0_3
+        for device_key in DEVICE_KEYS_0_3
     ),
 }
 
@@ -348,13 +353,14 @@ def get_sensor_types(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: OneWireConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up 1-Wire platform."""
-    onewire_hub = hass.data[DOMAIN][config_entry.entry_id]
+    # note: we have to go through the executor as SENSOR platform
+    # makes extra calls to the hub during device listing
     entities = await hass.async_add_executor_job(
-        get_entities, onewire_hub, config_entry.options
+        get_entities, config_entry.runtime_data, config_entry.options
     )
     async_add_entities(entities, True)
 
@@ -367,7 +373,6 @@ def get_entities(
         return []
 
     entities: list[OneWireSensor] = []
-    assert onewire_hub.owproxy
     for device in onewire_hub.devices:
         family = device.family
         device_type = device.type
@@ -375,12 +380,15 @@ def get_entities(
         device_info = device.device_info
         device_sub_type = "std"
         device_path = device.path
-        if "EF" in family:
+        if device_type and "EF" in family:
             device_sub_type = "HobbyBoard"
             family = device_type
-        elif "7E" in family:
+        elif device_type and "7E" in family:
             device_sub_type = "EDS"
             family = device_type
+        elif "A6" in family:
+            # A6 is a secondary family code for DS2438
+            family = "26"
 
         if family not in get_sensor_types(device_sub_type):
             continue
@@ -393,11 +401,13 @@ def get_entities(
                     ).decode()
                 )
                 if is_leaf:
-                    description = copy.deepcopy(description)
-                    description.device_class = SensorDeviceClass.HUMIDITY
-                    description.native_unit_of_measurement = PERCENTAGE
-                    description.translation_key = f"wetness_{s_id}"
-                    _LOGGER.info(description.translation_key)
+                    description = dataclasses.replace(
+                        description,
+                        device_class=SensorDeviceClass.HUMIDITY,
+                        native_unit_of_measurement=PERCENTAGE,
+                        translation_key="wetness_id",
+                        translation_placeholders={"id": s_id},
+                    )
             override_key = None
             if description.override_key:
                 override_key = description.override_key(device_id, options)

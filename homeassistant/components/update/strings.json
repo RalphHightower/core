@@ -9,7 +9,45 @@
   },
   "entity_component": {
     "_": {
-      "name": "[%key:component::update::title%]"
+      "name": "[%key:component::update::title%]",
+      "state": {
+        "on": "Update available",
+        "off": "Up-to-date"
+      },
+      "state_attributes": {
+        "in_progress": {
+          "name": "In progress",
+          "state": {
+            "true": "[%key:common::state::yes%]",
+            "false": "[%key:common::state::no%]"
+          }
+        },
+        "auto_update": {
+          "name": "Auto update",
+          "state": {
+            "true": "[%key:common::state::yes%]",
+            "false": "[%key:common::state::no%]"
+          }
+        },
+        "title": {
+          "name": "Title"
+        },
+        "skipped_version": {
+          "name": "Skipped version"
+        },
+        "release_url": {
+          "name": "Release URL"
+        },
+        "release_summary": {
+          "name": "Release summary"
+        },
+        "installed_version": {
+          "name": "Installed version"
+        },
+        "latest_version": {
+          "name": "Latest version"
+        }
+      }
     },
     "firmware": {
       "name": "Firmware"
@@ -18,7 +56,7 @@
   "services": {
     "install": {
       "name": "Install update",
-      "description": "Installs an update for this device or service.",
+      "description": "Installs an update for a device or service.",
       "fields": {
         "version": {
           "name": "Version",
@@ -26,7 +64,7 @@
         },
         "backup": {
           "name": "Backup",
-          "description": "If supported by the integration, this creates a backup before starting the update ."
+          "description": "If supported by the integration, this creates a backup before starting the update."
         }
       }
     },

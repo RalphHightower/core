@@ -1,4 +1,5 @@
 """Mock of a devolo Home Network device."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -18,6 +19,7 @@ from .const import (
     IP,
     NEIGHBOR_ACCESS_POINTS,
     PLCNET,
+    UPTIME,
 )
 
 
@@ -31,24 +33,31 @@ class MockDevice(Device):
     ) -> None:
         """Bring mock in a well defined state."""
         super().__init__(ip, zeroconf_instance)
+        self._firmware_version = DISCOVERY_INFO.properties["FirmwareVersion"]
         self.reset()
 
     @property
     def firmware_version(self) -> str:
         """Mock firmware version currently installed."""
-        return DISCOVERY_INFO.properties["FirmwareVersion"]
+        return self._firmware_version
+
+    @firmware_version.setter
+    def firmware_version(self, version: str) -> None:
+        """Mock firmware version currently installed."""
+        self._firmware_version = version
 
     async def async_connect(
         self, session_instance: httpx.AsyncClient | None = None
     ) -> None:
         """Give a mocked device the needed properties."""
-        self.mac = DISCOVERY_INFO.properties["PlcMacAddress"]
+        self.mac = DISCOVERY_INFO.properties["PlcMacAddress"] if self.plcnet else None
         self.mt_number = DISCOVERY_INFO.properties["MT"]
         self.product = DISCOVERY_INFO.properties["Product"]
         self.serial_number = DISCOVERY_INFO.properties["SN"]
 
     def reset(self):
         """Reset mock to starting point."""
+        self._firmware_version = DISCOVERY_INFO.properties["FirmwareVersion"]
         self.async_disconnect = AsyncMock()
         self.device = DeviceApi(IP, None, DISCOVERY_INFO)
         self.device.async_check_firmware_available = AsyncMock(
@@ -56,6 +65,7 @@ class MockDevice(Device):
         )
         self.device.async_get_led_setting = AsyncMock(return_value=False)
         self.device.async_restart = AsyncMock(return_value=True)
+        self.device.async_uptime = AsyncMock(return_value=UPTIME)
         self.device.async_start_wps = AsyncMock(return_value=True)
         self.device.async_get_wifi_connected_station = AsyncMock(
             return_value=CONNECTED_STATIONS

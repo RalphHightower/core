@@ -1,11 +1,12 @@
 """Pluggable auth modules for Home Assistant."""
+
 from __future__ import annotations
 
-import importlib
 import logging
 import types
-from typing import Any
+from typing import Any, Generic
 
+from typing_extensions import TypeVar
 import voluptuous as vol
 from voluptuous.humanize import humanize_error
 
@@ -14,7 +15,9 @@ from homeassistant.const import CONF_ID, CONF_NAME, CONF_TYPE
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.importlib import async_import_module
 from homeassistant.util.decorator import Registry
+from homeassistant.util.hass_dict import HassKey
 
 MULTI_FACTOR_AUTH_MODULES: Registry[str, type[MultiFactorAuthModule]] = Registry()
 
@@ -28,9 +31,15 @@ MULTI_FACTOR_AUTH_MODULE_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-DATA_REQS = "mfa_auth_module_reqs_processed"
+DATA_REQS: HassKey[set[str]] = HassKey("mfa_auth_module_reqs_processed")
 
 _LOGGER = logging.getLogger(__name__)
+
+_MultiFactorAuthModuleT = TypeVar(
+    "_MultiFactorAuthModuleT",
+    bound="MultiFactorAuthModule",
+    default="MultiFactorAuthModule",
+)
 
 
 class MultiFactorAuthModule:
@@ -50,7 +59,7 @@ class MultiFactorAuthModule:
 
         Default is same as type
         """
-        return self.config.get(CONF_ID, self.type)
+        return self.config.get(CONF_ID, self.type)  # type: ignore[no-any-return]
 
     @property
     def type(self) -> str:
@@ -60,7 +69,7 @@ class MultiFactorAuthModule:
     @property
     def name(self) -> str:
         """Return the name of the auth module."""
-        return self.config.get(CONF_NAME, self.DEFAULT_TITLE)
+        return self.config.get(CONF_NAME, self.DEFAULT_TITLE)  # type: ignore[no-any-return]
 
     # Implement by extending class
 
@@ -69,7 +78,7 @@ class MultiFactorAuthModule:
         """Return a voluptuous schema to define mfa auth module's input."""
         raise NotImplementedError
 
-    async def async_setup_flow(self, user_id: str) -> SetupFlow:
+    async def async_setup_flow(self, user_id: str) -> SetupFlow[Any]:
         """Return a data entry flow handler for setup module.
 
         Mfa module should extend SetupFlow
@@ -93,11 +102,14 @@ class MultiFactorAuthModule:
         raise NotImplementedError
 
 
-class SetupFlow(data_entry_flow.FlowHandler):
+class SetupFlow(data_entry_flow.FlowHandler, Generic[_MultiFactorAuthModuleT]):
     """Handler for the setup flow."""
 
     def __init__(
-        self, auth_module: MultiFactorAuthModule, setup_schema: vol.Schema, user_id: str
+        self,
+        auth_module: _MultiFactorAuthModuleT,
+        setup_schema: vol.Schema,
+        user_id: str,
     ) -> None:
         """Initialize the setup flow."""
         self._auth_module = auth_module
@@ -148,7 +160,7 @@ async def _load_mfa_module(hass: HomeAssistant, module_name: str) -> types.Modul
     module_path = f"homeassistant.auth.mfa_modules.{module_name}"
 
     try:
-        module = importlib.import_module(module_path)
+        module = await async_import_module(hass, module_path)
     except ImportError as err:
         _LOGGER.error("Unable to load mfa module %s: %s", module_name, err)
         raise HomeAssistantError(

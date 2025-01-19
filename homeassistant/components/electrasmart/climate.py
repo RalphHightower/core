@@ -121,6 +121,8 @@ class ElectraClimateEntity(ClimateEntity):
             ClimateEntityFeature.TARGET_TEMPERATURE
             | ClimateEntityFeature.FAN_MODE
             | ClimateEntityFeature.PRESET_MODE
+            | ClimateEntityFeature.TURN_OFF
+            | ClimateEntityFeature.TURN_ON
         )
 
         swing_modes: list = []
@@ -200,7 +202,7 @@ class ElectraClimateEntity(ClimateEntity):
                 return
 
             if not self._was_available:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "%s (%s) is now available",
                     self._electra_ac_device.mac,
                     self.name,

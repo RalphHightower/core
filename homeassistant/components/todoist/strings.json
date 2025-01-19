@@ -1,4 +1,33 @@
 {
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "token": "[%key:common::config_flow::data::api_token%]"
+        },
+        "description": "Please enter your API token from your [Todoist Settings page]({settings_url})"
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_api_key": "[%key:common::config_flow::error::invalid_api_key%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]"
+    },
+    "create_entry": {
+      "default": "[%key:common::config_flow::create_entry::authenticated%]"
+    }
+  },
+  "exceptions": {
+    "project_invalid": {
+      "message": "Invalid project name \"{project}\""
+    },
+    "section_invalid": {
+      "message": "Project \"{project}\" has no section \"{section}\""
+    }
+  },
   "services": {
     "new_task": {
       "name": "New task",
@@ -8,9 +37,17 @@
           "name": "Content",
           "description": "The name of the task."
         },
+        "description": {
+          "name": "Description",
+          "description": "A description for the task."
+        },
         "project": {
           "name": "Project",
           "description": "The name of the project this task should belong to."
+        },
+        "section": {
+          "name": "Section",
+          "description": "The name of a section within the project to add the task to."
         },
         "labels": {
           "name": "Labels",
@@ -29,7 +66,7 @@
           "description": "The day this task is due, in natural language."
         },
         "due_date_lang": {
-          "name": "Due data language",
+          "name": "Due date language",
           "description": "The language of due_date_string."
         },
         "due_date": {
@@ -41,7 +78,7 @@
           "description": "When should user be reminded of this task, in natural language."
         },
         "reminder_date_lang": {
-          "name": "Reminder data language",
+          "name": "Reminder date language",
           "description": "The language of reminder_date_string."
         },
         "reminder_date": {

@@ -1,4 +1,5 @@
 """Package to test the get_accessory method."""
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -17,8 +18,12 @@ from homeassistant.components.homekit.const import (
     TYPE_SWITCH,
     TYPE_VALVE,
 )
-from homeassistant.components.media_player import MediaPlayerEntityFeature
+from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
+    MediaPlayerEntityFeature,
+)
 from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.switch import SwitchDeviceClass
 from homeassistant.components.vacuum import VacuumEntityFeature
 from homeassistant.const import (
     ATTR_CODE,
@@ -202,7 +207,14 @@ def test_type_covers(type_name, entity_id, state, attrs) -> None:
             "TelevisionMediaPlayer",
             "media_player.tv",
             "on",
-            {ATTR_DEVICE_CLASS: "tv"},
+            {ATTR_DEVICE_CLASS: MediaPlayerDeviceClass.TV},
+            {},
+        ),
+        (
+            "ReceiverMediaPlayer",
+            "media_player.receiver",
+            "on",
+            {ATTR_DEVICE_CLASS: MediaPlayerDeviceClass.RECEIVER},
             {},
         ),
     ],
@@ -305,6 +317,13 @@ def test_type_sensors(type_name, entity_id, state, attrs) -> None:
     ("type_name", "entity_id", "state", "attrs", "config"),
     [
         ("Outlet", "switch.test", "on", {}, {CONF_TYPE: TYPE_OUTLET}),
+        (
+            "Outlet",
+            "switch.test",
+            "on",
+            {ATTR_DEVICE_CLASS: SwitchDeviceClass.OUTLET},
+            {},
+        ),
         ("Switch", "automation.test", "on", {}, {}),
         ("Switch", "button.test", STATE_UNKNOWN, {}, {}),
         ("Switch", "input_boolean.test", "on", {}, {}),
@@ -316,10 +335,10 @@ def test_type_sensors(type_name, entity_id, state, attrs) -> None:
         ("SelectSwitch", "select.test", "option1", {}, {}),
         ("Switch", "switch.test", "on", {}, {}),
         ("Switch", "switch.test", "on", {}, {CONF_TYPE: TYPE_SWITCH}),
-        ("Valve", "switch.test", "on", {}, {CONF_TYPE: TYPE_FAUCET}),
-        ("Valve", "switch.test", "on", {}, {CONF_TYPE: TYPE_VALVE}),
-        ("Valve", "switch.test", "on", {}, {CONF_TYPE: TYPE_SHOWER}),
-        ("Valve", "switch.test", "on", {}, {CONF_TYPE: TYPE_SPRINKLER}),
+        ("ValveSwitch", "switch.test", "on", {}, {CONF_TYPE: TYPE_FAUCET}),
+        ("ValveSwitch", "switch.test", "on", {}, {CONF_TYPE: TYPE_VALVE}),
+        ("ValveSwitch", "switch.test", "on", {}, {CONF_TYPE: TYPE_SHOWER}),
+        ("ValveSwitch", "switch.test", "on", {}, {CONF_TYPE: TYPE_SPRINKLER}),
     ],
 )
 def test_type_switches(type_name, entity_id, state, attrs, config) -> None:
@@ -328,6 +347,21 @@ def test_type_switches(type_name, entity_id, state, attrs, config) -> None:
     with patch.dict(TYPES, {type_name: mock_type}):
         entity_state = State(entity_id, state, attrs)
         get_accessory(None, None, entity_state, 2, config)
+    assert mock_type.called
+
+
+@pytest.mark.parametrize(
+    ("type_name", "entity_id", "state", "attrs"),
+    [
+        ("Valve", "valve.test", "on", {}),
+    ],
+)
+def test_type_valve(type_name, entity_id, state, attrs) -> None:
+    """Test if valve types are associated correctly."""
+    mock_type = Mock()
+    with patch.dict(TYPES, {type_name: mock_type}):
+        entity_state = State(entity_id, state, attrs)
+        get_accessory(None, None, entity_state, 2, {})
     assert mock_type.called
 
 

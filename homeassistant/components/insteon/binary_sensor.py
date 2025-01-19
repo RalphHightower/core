@@ -1,4 +1,5 @@
 """Support for INSTEON dimmers via PowerLinc Modem."""
+
 from pyinsteon.groups import (
     CO_SENSOR,
     DOOR_SENSOR,
@@ -24,7 +25,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import SIGNAL_ADD_ENTITIES
-from .insteon_entity import InsteonEntity
+from .entity import InsteonEntity
 from .utils import async_add_insteon_devices, async_add_insteon_entities
 
 SENSOR_TYPES = {
@@ -76,12 +77,7 @@ class InsteonBinarySensorEntity(InsteonEntity, BinarySensorEntity):
     def __init__(self, device, group):
         """Initialize the INSTEON binary sensor."""
         super().__init__(device, group)
-        self._sensor_type = SENSOR_TYPES.get(self._insteon_device_group.name)
-
-    @property
-    def device_class(self):
-        """Return the class of this sensor."""
-        return self._sensor_type
+        self._attr_device_class = SENSOR_TYPES.get(self._insteon_device_group.name)
 
     @property
     def is_on(self):

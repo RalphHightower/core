@@ -1,4 +1,5 @@
 """Support for IPMA weather service."""
+
 from __future__ import annotations
 
 import asyncio
@@ -103,10 +104,7 @@ class IPMAWeather(WeatherEntity, IPMADevice):
             else:
                 self._daily_forecast = None
 
-            if self._period == 1 or self._forecast_listeners["hourly"]:
-                await self._update_forecast("hourly", 1, True)
-            else:
-                self._hourly_forecast = None
+            await self._update_forecast("hourly", 1, True)
 
             _LOGGER.debug(
                 "Updated location %s based on %s, current observation %s",
@@ -139,11 +137,11 @@ class IPMAWeather(WeatherEntity, IPMADevice):
 
     @property
     def condition(self):
-        """Return the current condition."""
-        forecast = self._hourly_forecast or self._daily_forecast
+        """Return the current condition which is only available on the hourly forecast data."""
+        forecast = self._hourly_forecast
 
         if not forecast:
-            return
+            return None
 
         return self._condition_conversion(forecast[0].weather_type.id, None)
 
@@ -207,20 +205,13 @@ class IPMAWeather(WeatherEntity, IPMADevice):
             for data_in in forecast
         ]
 
-    @property
-    def forecast(self) -> list[Forecast]:
-        """Return the forecast array."""
-        return self._forecast(
-            self._hourly_forecast if self._period == 1 else self._daily_forecast
-        )
-
     async def _try_update_forecast(
         self,
         forecast_type: Literal["daily", "hourly"],
         period: int,
     ) -> None:
         """Try to update weather forecast."""
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(10):
                 await self._update_forecast(forecast_type, period, False)
 

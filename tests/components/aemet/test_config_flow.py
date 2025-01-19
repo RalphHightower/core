@@ -1,15 +1,20 @@
 """Define tests for the AEMET OpenData config flow."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aemet_opendata.exceptions import AuthError
+from freezegun.api import FrozenDateTimeFactory
 import pytest
 
-from homeassistant import data_entry_flow
-from homeassistant.components.aemet.const import CONF_STATION_UPDATES, DOMAIN
+from homeassistant.components.aemet.const import (
+    CONF_RADAR_UPDATES,
+    CONF_STATION_UPDATES,
+    DOMAIN,
+)
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE, CONF_NAME
 from homeassistant.core import HomeAssistant
-import homeassistant.util.dt as dt_util
+from homeassistant.data_entry_flow import FlowResultType
 
 from .util import mock_api_call
 
@@ -36,7 +41,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
             DOMAIN, context={"source": SOURCE_USER}
         )
 
-        assert result["type"] == data_entry_flow.FlowResultType.FORM
+        assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "user"
         assert result["errors"] == {}
 
@@ -50,7 +55,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
         entry = conf_entries[0]
         assert entry.state is ConfigEntryState.LOADED
 
-        assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+        assert result["type"] is FlowResultType.CREATE_ENTRY
         assert result["title"] == CONFIG[CONF_NAME]
         assert result["data"][CONF_LATITUDE] == CONFIG[CONF_LATITUDE]
         assert result["data"][CONF_LONGITUDE] == CONFIG[CONF_LONGITUDE]
@@ -59,13 +64,27 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
         assert len(mock_setup_entry.mock_calls) == 1
 
 
-async def test_form_options(hass: HomeAssistant) -> None:
+@pytest.mark.parametrize(
+    ("user_input", "expected"),
+    [
+        ({}, {CONF_RADAR_UPDATES: False, CONF_STATION_UPDATES: True}),
+        (
+            {CONF_RADAR_UPDATES: False, CONF_STATION_UPDATES: False},
+            {CONF_RADAR_UPDATES: False, CONF_STATION_UPDATES: False},
+        ),
+    ],
+)
+async def test_form_options(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    user_input: dict[str, bool],
+    expected: dict[str, bool],
+) -> None:
     """Test the form options."""
 
-    now = dt_util.parse_datetime("2021-01-09 12:00:00+00:00")
-    with patch("homeassistant.util.dt.now", return_value=now), patch(
-        "homeassistant.util.dt.utcnow", return_value=now
-    ), patch(
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2021-01-09 12:00:00+00:00")
+    with patch(
         "homeassistant.components.aemet.AEMET.api_call",
         side_effect=mock_api_call,
     ):
@@ -81,34 +100,17 @@ async def test_form_options(hass: HomeAssistant) -> None:
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
 
-        assert result["type"] == data_entry_flow.FlowResultType.FORM
+        assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "init"
 
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_STATION_UPDATES: False}
+            result["flow_id"], user_input=user_input
         )
 
-        assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+        assert result["type"] is FlowResultType.CREATE_ENTRY
         assert entry.options == {
-            CONF_STATION_UPDATES: False,
-        }
-
-        await hass.async_block_till_done()
-
-        assert entry.state is ConfigEntryState.LOADED
-
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-
-        assert result["type"] == data_entry_flow.FlowResultType.FORM
-        assert result["step_id"] == "init"
-
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_STATION_UPDATES: True}
-        )
-
-        assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
-        assert entry.options == {
-            CONF_STATION_UPDATES: True,
+            CONF_RADAR_UPDATES: expected[CONF_RADAR_UPDATES],
+            CONF_STATION_UPDATES: expected[CONF_STATION_UPDATES],
         }
 
         await hass.async_block_till_done()
@@ -116,13 +118,15 @@ async def test_form_options(hass: HomeAssistant) -> None:
         assert entry.state is ConfigEntryState.LOADED
 
 
-async def test_form_duplicated_id(hass: HomeAssistant) -> None:
+async def test_form_duplicated_id(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+) -> None:
     """Test setting up duplicated entry."""
 
-    now = dt_util.parse_datetime("2021-01-09 12:00:00+00:00")
-    with patch("homeassistant.util.dt.now", return_value=now), patch(
-        "homeassistant.util.dt.utcnow", return_value=now
-    ), patch(
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2021-01-09 12:00:00+00:00")
+    with patch(
         "homeassistant.components.aemet.AEMET.api_call",
         side_effect=mock_api_call,
     ):
@@ -135,14 +139,14 @@ async def test_form_duplicated_id(hass: HomeAssistant) -> None:
             DOMAIN, context={"source": SOURCE_USER}, data=CONFIG
         )
 
-        assert result["type"] == "abort"
+        assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "already_configured"
 
 
 async def test_form_auth_error(hass: HomeAssistant) -> None:
     """Test setting up with api auth error."""
     mocked_aemet = MagicMock()
-    mocked_aemet.get_conventional_observation_stations.side_effect = AuthError
+    mocked_aemet.select_coordinates.side_effect = AuthError
 
     with patch(
         "homeassistant.components.aemet.config_flow.AEMET",

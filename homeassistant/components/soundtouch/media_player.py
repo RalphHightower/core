@@ -1,9 +1,9 @@
 """Support for interface with a Bose SoundTouch."""
+
 from __future__ import annotations
 
 from functools import partial
 import logging
-import re
 from typing import Any
 
 from libsoundtouch.device import SoundTouchDevice
@@ -78,21 +78,25 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
     _attr_device_class = MediaPlayerDeviceClass.SPEAKER
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_source_list = [
+        Source.AUX.value,
+        Source.BLUETOOTH.value,
+    ]
 
     def __init__(self, device: SoundTouchDevice) -> None:
         """Create SoundTouch media player entity."""
 
         self._device = device
 
-        self._attr_unique_id = self._device.config.device_id
+        self._attr_unique_id = device.config.device_id
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device.config.device_id)},
+            identifiers={(DOMAIN, device.config.device_id)},
             connections={
-                (CONNECTION_NETWORK_MAC, format_mac(self._device.config.mac_address))
+                (CONNECTION_NETWORK_MAC, format_mac(device.config.mac_address))
             },
             manufacturer="Bose Corporation",
-            model=self._device.config.type,
-            name=self._device.config.name,
+            model=device.config.type,
+            name=device.config.name,
         )
 
         self._status = None
@@ -130,14 +134,6 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
     def source(self):
         """Name of the current input source."""
         return self._status.source
-
-    @property
-    def source_list(self):
-        """List of available input sources."""
-        return [
-            Source.AUX.value,
-            Source.BLUETOOTH.value,
-        ]
 
     @property
     def is_volume_muted(self):
@@ -254,7 +250,7 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
     ) -> None:
         """Play a piece of media."""
         _LOGGER.debug("Starting media with media_id: %s", media_id)
-        if re.match(r"http?://", str(media_id)):
+        if str(media_id).lower().startswith("http://"):  # no https support
             # URL
             _LOGGER.debug("Playing URL %s", str(media_id))
             self._device.play_url(str(media_id))
@@ -293,7 +289,7 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
         if not slaves:
             _LOGGER.warning("Unable to create zone without slaves")
         else:
-            _LOGGER.info("Creating zone with master %s", self._device.config.name)
+            _LOGGER.debug("Creating zone with master %s", self._device.config.name)
             self._device.create_zone([slave.device for slave in slaves])
 
     def remove_zone_slave(self, slaves):
@@ -309,7 +305,7 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
         if not slaves:
             _LOGGER.warning("Unable to find slaves to remove")
         else:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Removing slaves from zone with master %s", self._device.config.name
             )
             # SoundTouch API seems to have a bug and won't remove slaves if there are
@@ -331,7 +327,7 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
         if not slaves:
             _LOGGER.warning("Unable to find slaves to add")
         else:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Adding slaves to zone with master %s", self._device.config.name
             )
             self._device.add_zone_slave([slave.device for slave in slaves])
@@ -413,10 +409,8 @@ class SoundTouchMediaPlayer(MediaPlayerEntity):
             if slave_instance and slave_instance.entity_id != master:
                 slaves.append(slave_instance.entity_id)
 
-        attributes = {
+        return {
             "master": master,
             "is_master": master == self.entity_id,
             "slaves": slaves,
         }
-
-        return attributes

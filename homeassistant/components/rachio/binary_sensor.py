@@ -1,6 +1,8 @@
 """Integration with the Rachio Iro sprinkler system controller."""
+
 from abc import abstractmethod
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -14,16 +16,22 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN as DOMAIN_RACHIO,
+    KEY_BATTERY_STATUS,
     KEY_DEVICE_ID,
+    KEY_LOW,
     KEY_RAIN_SENSOR_TRIPPED,
+    KEY_REPLACE,
+    KEY_REPORTED_STATE,
+    KEY_STATE,
     KEY_STATUS,
     KEY_SUBTYPE,
     SIGNAL_RACHIO_CONTROLLER_UPDATE,
     SIGNAL_RACHIO_RAIN_SENSOR_UPDATE,
     STATUS_ONLINE,
 )
+from .coordinator import RachioUpdateCoordinator
 from .device import RachioPerson
-from .entity import RachioDevice
+from .entity import RachioDevice, RachioHoseTimerEntity
 from .webhooks import (
     SUBTYPE_COLD_REBOOT,
     SUBTYPE_OFFLINE,
@@ -51,6 +59,11 @@ def _create_entities(hass: HomeAssistant, config_entry: ConfigEntry) -> list[Ent
     for controller in person.controllers:
         entities.append(RachioControllerOnlineBinarySensor(controller))
         entities.append(RachioRainSensor(controller))
+    entities.extend(
+        RachioHoseTimerBattery(valve, base_station.status_coordinator)
+        for base_station in person.base_stations
+        for valve in base_station.status_coordinator.data.values()
+    )
     return entities
 
 
@@ -58,16 +71,6 @@ class RachioControllerBinarySensor(RachioDevice, BinarySensorEntity):
     """Represent a binary sensor that reflects a Rachio state."""
 
     _attr_has_entity_name = True
-
-    def __init__(self, controller):
-        """Set up a new Rachio controller binary sensor."""
-        super().__init__(controller)
-        self._state = None
-
-    @property
-    def is_on(self) -> bool:
-        """Return whether the sensor has a 'true' value."""
-        return self._state
 
     @callback
     def _async_handle_any_update(self, *args, **kwargs) -> None:
@@ -98,15 +101,15 @@ class RachioControllerOnlineBinarySensor(RachioControllerBinarySensor):
     def _async_handle_update(self, *args, **kwargs) -> None:
         """Handle an update to the state of this sensor."""
         if args[0][0][KEY_SUBTYPE] in (SUBTYPE_ONLINE, SUBTYPE_COLD_REBOOT):
-            self._state = True
+            self._attr_is_on = True
         elif args[0][0][KEY_SUBTYPE] == SUBTYPE_OFFLINE:
-            self._state = False
+            self._attr_is_on = False
 
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to updates."""
-        self._state = self._controller.init_data[KEY_STATUS] == STATUS_ONLINE
+        self._attr_is_on = self._controller.init_data[KEY_STATUS] == STATUS_ONLINE
 
         self.async_on_remove(
             async_dispatcher_connect(
@@ -132,15 +135,15 @@ class RachioRainSensor(RachioControllerBinarySensor):
     def _async_handle_update(self, *args, **kwargs) -> None:
         """Handle an update to the state of this sensor."""
         if args[0][0][KEY_SUBTYPE] == SUBTYPE_RAIN_SENSOR_DETECTION_ON:
-            self._state = True
+            self._attr_is_on = True
         elif args[0][0][KEY_SUBTYPE] == SUBTYPE_RAIN_SENSOR_DETECTION_OFF:
-            self._state = False
+            self._attr_is_on = False
 
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to updates."""
-        self._state = self._controller.init_data[KEY_RAIN_SENSOR_TRIPPED]
+        self._attr_is_on = self._controller.init_data[KEY_RAIN_SENSOR_TRIPPED]
 
         self.async_on_remove(
             async_dispatcher_connect(
@@ -149,3 +152,27 @@ class RachioRainSensor(RachioControllerBinarySensor):
                 self._async_handle_any_update,
             )
         )
+
+
+class RachioHoseTimerBattery(RachioHoseTimerEntity, BinarySensorEntity):
+    """Represents a battery sensor for a smart hose timer."""
+
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+
+    def __init__(
+        self, data: dict[str, Any], coordinator: RachioUpdateCoordinator
+    ) -> None:
+        """Initialize a smart hose timer battery sensor."""
+        super().__init__(data, coordinator)
+        self._attr_unique_id = f"{self.id}-battery"
+
+    @callback
+    def _update_attr(self) -> None:
+        """Handle updated coordinator data."""
+        data = self.coordinator.data[self.id]
+
+        self._static_attrs = data[KEY_STATE][KEY_REPORTED_STATE]
+        self._attr_is_on = self._static_attrs[KEY_BATTERY_STATUS] in [
+            KEY_LOW,
+            KEY_REPLACE,
+        ]

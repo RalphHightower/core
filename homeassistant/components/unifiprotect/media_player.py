@@ -1,17 +1,12 @@
 """Support for Ubiquiti's UniFi Protect NVR."""
+
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
-from pyunifiprotect.data import (
-    Camera,
-    ModelType,
-    ProtectAdoptableDeviceModel,
-    ProtectModelWithId,
-    StateType,
-)
-from pyunifiprotect.exceptions import StreamError
+from uiprotect.data import Camera, ProtectAdoptableDeviceModel, StateType
+from uiprotect.exceptions import StreamError
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
@@ -24,45 +19,41 @@ from homeassistant.components.media_player import (
     MediaType,
     async_process_play_media_url,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DISPATCH_ADOPT, DOMAIN
-from .data import ProtectData
+from .data import ProtectDeviceType, UFPConfigEntry
 from .entity import ProtectDeviceEntity
-from .utils import async_dispatch_id as _ufpd
 
 _LOGGER = logging.getLogger(__name__)
+
+_SPEAKER_DESCRIPTION = MediaPlayerEntityDescription(
+    key="speaker", name="Speaker", device_class=MediaPlayerDeviceClass.SPEAKER
+)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UFPConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Discover cameras with speakers on a UniFi Protect NVR."""
-    data: ProtectData = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data
 
-    async def _add_new_device(device: ProtectAdoptableDeviceModel) -> None:
+    @callback
+    def _add_new_device(device: ProtectAdoptableDeviceModel) -> None:
         if isinstance(device, Camera) and (
             device.has_speaker or device.has_removable_speaker
         ):
             async_add_entities([ProtectMediaPlayer(data, device)])
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, _ufpd(entry, DISPATCH_ADOPT), _add_new_device)
+    data.async_subscribe_adopt(_add_new_device)
+    async_add_entities(
+        ProtectMediaPlayer(data, device, _SPEAKER_DESCRIPTION)
+        for device in data.get_cameras()
+        if device.has_speaker or device.has_removable_speaker
     )
-
-    entities = []
-    for device in data.get_by_types({ModelType.CAMERA}):
-        device = cast(Camera, device)
-        if device.has_speaker or device.has_removable_speaker:
-            entities.append(ProtectMediaPlayer(data, device))
-
-    async_add_entities(entities)
 
 
 class ProtectMediaPlayer(ProtectDeviceEntity, MediaPlayerEntity):
@@ -77,26 +68,11 @@ class ProtectMediaPlayer(ProtectDeviceEntity, MediaPlayerEntity):
         | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.BROWSE_MEDIA
     )
-
-    def __init__(
-        self,
-        data: ProtectData,
-        camera: Camera,
-    ) -> None:
-        """Initialize an UniFi speaker."""
-        super().__init__(
-            data,
-            camera,
-            MediaPlayerEntityDescription(
-                key="speaker", device_class=MediaPlayerDeviceClass.SPEAKER
-            ),
-        )
-
-        self._attr_name = f"{self.device.display_name} Speaker"
-        self._attr_media_content_type = MediaType.MUSIC
+    _attr_media_content_type = MediaType.MUSIC
+    _state_attrs = ("_attr_available", "_attr_state", "_attr_volume_level")
 
     @callback
-    def _async_update_device_from_protect(self, device: ProtectModelWithId) -> None:
+    def _async_update_device_from_protect(self, device: ProtectDeviceType) -> None:
         super()._async_update_device_from_protect(device)
         updated_device = self.device
         self._attr_volume_level = float(updated_device.speaker_settings.volume / 100)
@@ -110,7 +86,7 @@ class ProtectMediaPlayer(ProtectDeviceEntity, MediaPlayerEntity):
             self._attr_state = MediaPlayerState.IDLE
 
         is_connected = self.data.last_update_success and (
-            updated_device.state == StateType.CONNECTED
+            updated_device.state is StateType.CONNECTED
             or (not updated_device.is_adopted_by_us and updated_device.can_adopt)
         )
         self._attr_available = is_connected and updated_device.feature_flags.has_speaker

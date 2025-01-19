@@ -10,7 +10,18 @@
     }),
   ])
 # ---
-# name: test_get_tts_audio_raw
+# name: test_get_tts_audio_different_formats
+  list([
+    dict({
+      'data': dict({
+        'text': 'Hello world',
+      }),
+      'payload': None,
+      'type': 'synthesize',
+    }),
+  ])
+# ---
+# name: test_get_tts_audio_different_formats.1
   list([
     dict({
       'data': dict({

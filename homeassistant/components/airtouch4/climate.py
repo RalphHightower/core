@@ -1,4 +1,5 @@
 """AirTouch 4 component to control of AirTouch 4 Climate Devices."""
+
 from __future__ import annotations
 
 import logging
@@ -15,13 +16,13 @@ from homeassistant.components.climate import (
     ClimateEntityFeature,
     HVACMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import AirTouch4ConfigEntry
 from .const import DOMAIN
 
 AT_TO_HA_STATE = {
@@ -62,11 +63,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: AirTouch4ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Airtouch 4."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = config_entry.runtime_data
     info = coordinator.data
     entities: list[ClimateEntity] = [
         AirtouchGroup(coordinator, group["group_number"], info)
@@ -88,7 +89,10 @@ class AirtouchAC(CoordinatorEntity, ClimateEntity):
     _attr_name = None
 
     _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.FAN_MODE
+        | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.TURN_ON
     )
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
@@ -98,27 +102,19 @@ class AirtouchAC(CoordinatorEntity, ClimateEntity):
         self._ac_number = ac_number
         self._airtouch = coordinator.airtouch
         self._info = info
-        self._unit = self._airtouch.GetAcs()[self._ac_number]
+        self._unit = self._airtouch.GetAcs()[ac_number]
+        self._attr_unique_id = f"ac_{ac_number}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"ac_{ac_number}")},
+            name=f"AC {ac_number}",
+            manufacturer="Airtouch",
+            model="Airtouch 4",
+        )
 
     @callback
     def _handle_coordinator_update(self):
         self._unit = self._airtouch.GetAcs()[self._ac_number]
         return super()._handle_coordinator_update()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for this device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id)},
-            name=f"AC {self._ac_number}",
-            manufacturer="Airtouch",
-            model="Airtouch 4",
-        )
-
-    @property
-    def unique_id(self):
-        """Return unique ID for this device."""
-        return f"ac_{self._ac_number}"
 
     @property
     def current_temperature(self):
@@ -159,7 +155,8 @@ class AirtouchAC(CoordinatorEntity, ClimateEntity):
             raise ValueError(f"Unsupported HVAC mode: {hvac_mode}")
 
         if hvac_mode == HVACMode.OFF:
-            return await self.async_turn_off()
+            await self.async_turn_off()
+            return
         await self._airtouch.SetCoolingModeForAc(
             self._ac_number, HA_STATE_TO_AT[hvac_mode]
         )
@@ -200,7 +197,11 @@ class AirtouchGroup(CoordinatorEntity, ClimateEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.TURN_ON
+    )
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = AT_GROUP_MODES
 
@@ -208,29 +209,21 @@ class AirtouchGroup(CoordinatorEntity, ClimateEntity):
         """Initialize the climate device."""
         super().__init__(coordinator)
         self._group_number = group_number
+        self._attr_unique_id = group_number
         self._airtouch = coordinator.airtouch
         self._info = info
-        self._unit = self._airtouch.GetGroupByGroupNumber(self._group_number)
-
-    @callback
-    def _handle_coordinator_update(self):
-        self._unit = self._airtouch.GetGroupByGroupNumber(self._group_number)
-        return super()._handle_coordinator_update()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for this device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id)},
+        self._unit = self._airtouch.GetGroupByGroupNumber(group_number)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, group_number)},
             manufacturer="Airtouch",
             model="Airtouch 4",
             name=self._unit.GroupName,
         )
 
-    @property
-    def unique_id(self):
-        """Return unique ID for this device."""
-        return self._group_number
+    @callback
+    def _handle_coordinator_update(self):
+        self._unit = self._airtouch.GetGroupByGroupNumber(self._group_number)
+        return super()._handle_coordinator_update()
 
     @property
     def min_temp(self):
@@ -268,7 +261,8 @@ class AirtouchGroup(CoordinatorEntity, ClimateEntity):
             raise ValueError(f"Unsupported HVAC mode: {hvac_mode}")
 
         if hvac_mode == HVACMode.OFF:
-            return await self.async_turn_off()
+            await self.async_turn_off()
+            return
         if self.hvac_mode == HVACMode.OFF:
             await self.async_turn_on()
         self._unit = self._airtouch.GetGroups()[self._group_number]

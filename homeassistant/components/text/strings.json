@@ -3,6 +3,9 @@
   "device_automation": {
     "action_type": {
       "set_value": "Set value for {entity_name}"
+    },
+    "extra_fields": {
+      "value": "[%key:common::device_automation::extra_fields::value%]"
     }
   },
   "entity_component": {
@@ -16,10 +19,10 @@
           "name": "Min length"
         },
         "mode": {
-          "name": "Mode",
+          "name": "[%key:common::config_flow::data::mode%]",
           "state": {
             "text": "Text",
-            "password": "Password"
+            "password": "[%key:common::config_flow::data::password%]"
           }
         },
         "pattern": {

@@ -1,18 +1,18 @@
 """Denon HEOS Media Player."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Coroutine
 from functools import reduce, wraps
 import logging
 from operator import ior
-from typing import Any, ParamSpec
+from typing import Any
 
 from pyheos import HeosError, const as heos_const
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
     ATTR_MEDIA_ENQUEUE,
-    DOMAIN,
     BrowseMedia,
     MediaPlayerEnqueue,
     MediaPlayerEntity,
@@ -21,7 +21,6 @@ from homeassistant.components.media_player import (
     MediaType,
     async_process_play_media_url,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import (
@@ -31,16 +30,8 @@ from homeassistant.helpers.dispatcher import (
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.dt import utcnow
 
-from .const import (
-    DATA_ENTITY_ID_MAP,
-    DATA_GROUP_MANAGER,
-    DATA_SOURCE_MANAGER,
-    DOMAIN as HEOS_DOMAIN,
-    SIGNAL_HEOS_PLAYER_ADDED,
-    SIGNAL_HEOS_UPDATED,
-)
-
-_P = ParamSpec("_P")
+from . import GroupManager, HeosConfigEntry, SourceManager
+from .const import DOMAIN as HEOS_DOMAIN, SIGNAL_HEOS_PLAYER_ADDED, SIGNAL_HEOS_UPDATED
 
 BASE_SUPPORTED_FEATURES = (
     MediaPlayerEntityFeature.VOLUME_MUTE
@@ -56,9 +47,9 @@ BASE_SUPPORTED_FEATURES = (
 )
 
 PLAY_STATE_TO_STATE = {
-    heos_const.PLAY_STATE_PLAY: MediaPlayerState.PLAYING,
-    heos_const.PLAY_STATE_STOP: MediaPlayerState.IDLE,
-    heos_const.PLAY_STATE_PAUSE: MediaPlayerState.PAUSED,
+    heos_const.PlayState.PLAY: MediaPlayerState.PLAYING,
+    heos_const.PlayState.STOP: MediaPlayerState.IDLE,
+    heos_const.PlayState.PAUSE: MediaPlayerState.PAUSED,
 }
 
 CONTROL_TO_SUPPORT = {
@@ -70,30 +61,37 @@ CONTROL_TO_SUPPORT = {
 }
 
 HA_HEOS_ENQUEUE_MAP = {
-    None: heos_const.ADD_QUEUE_REPLACE_AND_PLAY,
-    MediaPlayerEnqueue.ADD: heos_const.ADD_QUEUE_ADD_TO_END,
-    MediaPlayerEnqueue.REPLACE: heos_const.ADD_QUEUE_REPLACE_AND_PLAY,
-    MediaPlayerEnqueue.NEXT: heos_const.ADD_QUEUE_PLAY_NEXT,
-    MediaPlayerEnqueue.PLAY: heos_const.ADD_QUEUE_PLAY_NOW,
+    None: heos_const.AddCriteriaType.REPLACE_AND_PLAY,
+    MediaPlayerEnqueue.ADD: heos_const.AddCriteriaType.ADD_TO_END,
+    MediaPlayerEnqueue.REPLACE: heos_const.AddCriteriaType.REPLACE_AND_PLAY,
+    MediaPlayerEnqueue.NEXT: heos_const.AddCriteriaType.PLAY_NEXT,
+    MediaPlayerEnqueue.PLAY: heos_const.AddCriteriaType.PLAY_NOW,
 }
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: HeosConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add media players for a config entry."""
-    players = hass.data[HEOS_DOMAIN][DOMAIN]
-    devices = [HeosMediaPlayer(player) for player in players.values()]
+    players = entry.runtime_data.players
+    devices = [
+        HeosMediaPlayer(
+            player, entry.runtime_data.source_manager, entry.runtime_data.group_manager
+        )
+        for player in players.values()
+    ]
     async_add_entities(devices, True)
 
 
-_FuncType = Callable[_P, Awaitable[Any]]
-_ReturnFuncType = Callable[_P, Coroutine[Any, Any, None]]
+type _FuncType[**_P] = Callable[_P, Awaitable[Any]]
+type _ReturnFuncType[**_P] = Callable[_P, Coroutine[Any, Any, None]]
 
 
-def log_command_error(command: str) -> Callable[[_FuncType[_P]], _ReturnFuncType[_P]]:
+def log_command_error[**_P](
+    command: str,
+) -> Callable[[_FuncType[_P]], _ReturnFuncType[_P]]:
     """Return decorator that logs command failure."""
 
     def decorator(func: _FuncType[_P]) -> _ReturnFuncType[_P]:
@@ -114,17 +112,27 @@ class HeosMediaPlayer(MediaPlayerEntity):
 
     _attr_media_content_type = MediaType.MUSIC
     _attr_should_poll = False
+    _attr_supported_features = BASE_SUPPORTED_FEATURES
+    _attr_media_image_remotely_accessible = True
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(self, player):
+    def __init__(
+        self, player, source_manager: SourceManager, group_manager: GroupManager
+    ) -> None:
         """Initialize."""
         self._media_position_updated_at = None
         self._player = player
-        self._signals = []
-        self._attr_supported_features = BASE_SUPPORTED_FEATURES
-        self._source_manager = None
-        self._group_manager = None
+        self._source_manager = source_manager
+        self._group_manager = group_manager
+        self._attr_unique_id = str(player.player_id)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(HEOS_DOMAIN, player.player_id)},
+            manufacturer="HEOS",
+            model=player.model,
+            name=player.name,
+            sw_version=player.version,
+        )
 
     async def _player_update(self, player_id, event):
         """Handle player attribute updated."""
@@ -141,19 +149,21 @@ class HeosMediaPlayer(MediaPlayerEntity):
     async def async_added_to_hass(self) -> None:
         """Device added to hass."""
         # Update state when attributes of the player change
-        self._signals.append(
+        self.async_on_remove(
             self._player.heos.dispatcher.connect(
                 heos_const.SIGNAL_PLAYER_EVENT, self._player_update
             )
         )
         # Update state when heos changes
-        self._signals.append(
+        self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_HEOS_UPDATED, self._heos_updated)
         )
         # Register this player's entity_id so it can be resolved by the group manager
-        self.hass.data[HEOS_DOMAIN][DATA_ENTITY_ID_MAP][
-            self._player.player_id
-        ] = self.entity_id
+        self.async_on_remove(
+            self._group_manager.register_media_player(
+                self._player.player_id, self.entity_id
+            )
+        )
         async_dispatcher_send(self.hass, SIGNAL_HEOS_PLAYER_ADDED)
 
     @log_command_error("clear playlist")
@@ -164,7 +174,9 @@ class HeosMediaPlayer(MediaPlayerEntity):
     @log_command_error("join_players")
     async def async_join_players(self, group_members: list[str]) -> None:
         """Join `group_members` as a player group with the current player."""
-        await self._group_manager.async_join_players(self.entity_id, group_members)
+        await self._group_manager.async_join_players(
+            self._player.player_id, self.entity_id, group_members
+        )
 
     @log_command_error("pause")
     async def async_media_pause(self) -> None:
@@ -256,7 +268,7 @@ class HeosMediaPlayer(MediaPlayerEntity):
                 )
             if index is None:
                 raise ValueError(f"Invalid favorite '{media_id}'")
-            await self._player.play_favorite(index)
+            await self._player.play_preset_station(index)
             return
 
         raise ValueError(f"Unsupported media type '{media_type}'")
@@ -284,38 +296,17 @@ class HeosMediaPlayer(MediaPlayerEntity):
             ior, current_support, BASE_SUPPORTED_FEATURES
         )
 
-        if self._group_manager is None:
-            self._group_manager = self.hass.data[HEOS_DOMAIN][DATA_GROUP_MANAGER]
-
-        if self._source_manager is None:
-            self._source_manager = self.hass.data[HEOS_DOMAIN][DATA_SOURCE_MANAGER]
-
     @log_command_error("unjoin_player")
     async def async_unjoin_player(self) -> None:
         """Remove this player from any group."""
-        await self._group_manager.async_unjoin_player(self.entity_id)
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Disconnect the device when removed."""
-        for signal_remove in self._signals:
-            signal_remove()
-        self._signals.clear()
+        await self._group_manager.async_unjoin_player(
+            self._player.player_id, self.entity_id
+        )
 
     @property
     def available(self) -> bool:
         """Return True if the device is available."""
         return self._player.available
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Get attributes about the device."""
-        return DeviceInfo(
-            identifiers={(HEOS_DOMAIN, self._player.player_id)},
-            manufacturer="HEOS",
-            model=self._player.model,
-            name=self._player.name,
-            sw_version=self._player.version,
-        )
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -378,12 +369,7 @@ class HeosMediaPlayer(MediaPlayerEntity):
         return self._media_position_updated_at
 
     @property
-    def media_image_remotely_accessible(self) -> bool:
-        """If the image url is remotely accessible."""
-        return True
-
-    @property
-    def media_image_url(self) -> str:
+    def media_image_url(self) -> str | None:
         """Image url of current playing media."""
         # May be an empty string, if so, return None
         image_url = self._player.now_playing_media.image_url
@@ -413,11 +399,6 @@ class HeosMediaPlayer(MediaPlayerEntity):
     def state(self) -> MediaPlayerState:
         """State of the player."""
         return PLAY_STATE_TO_STATE[self._player.state]
-
-    @property
-    def unique_id(self) -> str:
-        """Return a unique ID."""
-        return str(self._player.player_id)
 
     @property
     def volume_level(self) -> float:

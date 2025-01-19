@@ -1,6 +1,8 @@
 """The tests for the Tasmota light platform."""
+
 import copy
 import json
+from typing import Any
 from unittest.mock import patch
 
 from hatasmota.const import CONF_MAC
@@ -22,6 +24,8 @@ from .test_common import (
     help_test_availability_discovery_update,
     help_test_availability_poll_state,
     help_test_availability_when_connection_lost,
+    help_test_deep_sleep_availability,
+    help_test_deep_sleep_availability_when_connection_lost,
     help_test_discovery_device_remove,
     help_test_discovery_removal,
     help_test_discovery_update_unchanged,
@@ -351,7 +355,7 @@ async def test_controlling_state_via_mqtt_on_off(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
     assert not state.attributes.get(ATTR_ASSUMED_STATE)
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON"}')
     state = hass.states.get("light.tasmota_test")
@@ -361,7 +365,7 @@ async def test_controlling_state_via_mqtt_on_off(
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"OFF"}')
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/stat/RESULT", '{"POWER":"ON"}')
 
@@ -373,7 +377,7 @@ async def test_controlling_state_via_mqtt_on_off(
 
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
 
 async def test_controlling_state_via_mqtt_ct(
@@ -402,7 +406,7 @@ async def test_controlling_state_via_mqtt_ct(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
     assert not state.attributes.get(ATTR_ASSUMED_STATE)
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON"}')
     state = hass.states.get("light.tasmota_test")
@@ -412,7 +416,7 @@ async def test_controlling_state_via_mqtt_ct(
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"OFF"}')
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(
         hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON","Dimmer":50}'
@@ -467,7 +471,7 @@ async def test_controlling_state_via_mqtt_rgbw(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
     assert not state.attributes.get(ATTR_ASSUMED_STATE)
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON"}')
     state = hass.states.get("light.tasmota_test")
@@ -477,7 +481,7 @@ async def test_controlling_state_via_mqtt_rgbw(
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"OFF"}')
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(
         hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON","Dimmer":50,"White":0}'
@@ -568,7 +572,7 @@ async def test_controlling_state_via_mqtt_rgbww(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
     assert not state.attributes.get(ATTR_ASSUMED_STATE)
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON"}')
     state = hass.states.get("light.tasmota_test")
@@ -578,7 +582,7 @@ async def test_controlling_state_via_mqtt_rgbww(
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"OFF"}')
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(
         hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON","Dimmer":50}'
@@ -604,7 +608,7 @@ async def test_controlling_state_via_mqtt_rgbww(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_ON
     # Setting white > 0 should clear the color
-    assert "rgb_color" not in state.attributes
+    assert not state.attributes.get("hs_color")
     assert state.attributes.get("color_mode") == "color_temp"
 
     async_fire_mqtt_message(
@@ -621,7 +625,7 @@ async def test_controlling_state_via_mqtt_rgbww(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_ON
     # Setting white to 0 should clear the color_temp
-    assert "color_temp" not in state.attributes
+    assert not state.attributes.get("color_temp")
     assert state.attributes.get("hs_color") == (30, 100)
     assert state.attributes.get("color_mode") == "hs"
 
@@ -670,7 +674,7 @@ async def test_controlling_state_via_mqtt_rgbww_tuya(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
     assert not state.attributes.get(ATTR_ASSUMED_STATE)
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON"}')
     state = hass.states.get("light.tasmota_test")
@@ -680,7 +684,7 @@ async def test_controlling_state_via_mqtt_rgbww_tuya(
     async_fire_mqtt_message(hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"OFF"}')
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_OFF
-    assert "color_mode" not in state.attributes
+    assert not state.attributes["color_mode"]
 
     async_fire_mqtt_message(
         hass, "tasmota_49A3BC/tele/STATE", '{"POWER":"ON","Dimmer":50}'
@@ -716,7 +720,7 @@ async def test_controlling_state_via_mqtt_rgbww_tuya(
     state = hass.states.get("light.tasmota_test")
     assert state.state == STATE_ON
     # Setting white > 0 should clear the color
-    assert "rgb_color" not in state.attributes
+    assert not state.attributes.get("hs_color")
     assert state.attributes.get("color_mode") == "color_temp"
 
     async_fire_mqtt_message(
@@ -1104,7 +1108,7 @@ async def test_sending_mqtt_commands_rgbww(
     )
     mqtt_mock.async_publish.reset_mock()
 
-    await common.async_turn_on(hass, "light.tasmota_test", color_temp=200)
+    await common.async_turn_on(hass, "light.tasmota_test", color_temp_kelvin=5000)
     mqtt_mock.async_publish.assert_called_once_with(
         "tasmota_49A3BC/cmnd/Backlog",
         "NoDelay;Power1 ON;NoDelay;CT 200",
@@ -1346,7 +1350,9 @@ async def test_transition(
     assert state.attributes.get("color_temp") == 153
 
     # Set color_temp of the light from 153 to 500 @ 50%: Speed should be 6*2*2=24
-    await common.async_turn_on(hass, "light.tasmota_test", color_temp=500, transition=6)
+    await common.async_turn_on(
+        hass, "light.tasmota_test", color_temp_kelvin=2000, transition=6
+    )
     mqtt_mock.async_publish.assert_called_once_with(
         "tasmota_49A3BC/cmnd/Backlog",
         "NoDelay;Fade2 1;NoDelay;Speed2 24;NoDelay;Power1 ON;NoDelay;CT 500",
@@ -1365,7 +1371,9 @@ async def test_transition(
     assert state.attributes.get("color_temp") == 500
 
     # Set color_temp of the light from 500 to 326 @ 50%: Speed should be 6*2*2*2=48->40
-    await common.async_turn_on(hass, "light.tasmota_test", color_temp=326, transition=6)
+    await common.async_turn_on(
+        hass, "light.tasmota_test", color_temp_kelvin=3067, transition=6
+    )
     mqtt_mock.async_publish.assert_called_once_with(
         "tasmota_49A3BC/cmnd/Backlog",
         "NoDelay;Fade2 1;NoDelay;Speed2 40;NoDelay;Power1 ON;NoDelay;CT 326",
@@ -1475,7 +1483,13 @@ async def test_relay_as_light(
     assert state is not None
 
 
-async def _test_split_light(hass, mqtt_mock, config, num_lights, num_switches):
+async def _test_split_light(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config: dict[str, Any],
+    num_lights: int,
+    num_switches: int,
+) -> None:
     """Test multi-channel light split to single-channel dimmers."""
     mac = config["mac"]
 
@@ -1550,7 +1564,12 @@ async def test_split_light2(
     await _test_split_light(hass, mqtt_mock, config, 5, 2)
 
 
-async def _test_unlinked_light(hass, mqtt_mock, config, num_switches):
+async def _test_unlinked_light(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config: dict[str, Any],
+    num_switches: int,
+) -> None:
     """Test rgbww light split to rgb+ww."""
     mac = config["mac"]
     num_lights = 2
@@ -1669,6 +1688,21 @@ async def test_availability_when_connection_lost(
     )
 
 
+async def test_deep_sleep_availability_when_connection_lost(
+    hass: HomeAssistant,
+    mqtt_client_mock: MqttMockPahoClient,
+    mqtt_mock: MqttMockHAClient,
+    setup_tasmota,
+) -> None:
+    """Test availability after MQTT disconnection."""
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["rl"][0] = 2
+    config["lt_st"] = 1  # 1 channel light (Dimmer)
+    await help_test_deep_sleep_availability_when_connection_lost(
+        hass, mqtt_client_mock, mqtt_mock, Platform.LIGHT, config
+    )
+
+
 async def test_availability(
     hass: HomeAssistant, mqtt_mock: MqttMockHAClient, setup_tasmota
 ) -> None:
@@ -1677,6 +1711,16 @@ async def test_availability(
     config["rl"][0] = 2
     config["lt_st"] = 1  # 1 channel light (Dimmer)
     await help_test_availability(hass, mqtt_mock, Platform.LIGHT, config)
+
+
+async def test_deep_sleep_availability(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient, setup_tasmota
+) -> None:
+    """Test availability."""
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["rl"][0] = 2
+    config["lt_st"] = 1  # 1 channel light (Dimmer)
+    await help_test_deep_sleep_availability(hass, mqtt_mock, Platform.LIGHT, config)
 
 
 async def test_availability_discovery_update(
@@ -1835,3 +1879,35 @@ async def test_entity_id_update_discovery_update(
     await help_test_entity_id_update_discovery_update(
         hass, mqtt_mock, Platform.LIGHT, config
     )
+
+
+async def test_no_device_name(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient, setup_tasmota
+) -> None:
+    """Test name of lights when no device name is set.
+
+    When the device name is not set, Tasmota uses friendly name 1 as device naem.
+    This test ensures that case is handled correctly.
+    """
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["dn"] = "Light 1"
+    config["fn"][0] = "Light 1"
+    config["fn"][1] = "Light 2"
+    config["rl"][0] = 2
+    config["rl"][1] = 2
+    mac = config["mac"]
+
+    async_fire_mqtt_message(
+        hass,
+        f"{DEFAULT_PREFIX}/{mac}/config",
+        json.dumps(config),
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("light.light_1")
+    assert state is not None
+    assert state.attributes["friendly_name"] == "Light 1"
+
+    state = hass.states.get("light.light_1_light_2")
+    assert state is not None
+    assert state.attributes["friendly_name"] == "Light 1 Light 2"

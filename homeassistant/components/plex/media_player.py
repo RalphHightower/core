@@ -1,10 +1,11 @@
 """Support to interface with the Plex API."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from functools import wraps
 import logging
-from typing import Any, Concatenate, ParamSpec, TypeVar, cast
+from typing import Any, Concatenate, cast
 
 import plexapi.exceptions
 import requests.exceptions
@@ -45,15 +46,11 @@ from .helpers import get_plex_data, get_plex_server
 from .media_browser import browse_media
 from .services import process_plex_payload
 
-_PlexMediaPlayerT = TypeVar("_PlexMediaPlayerT", bound="PlexMediaPlayer")
-_R = TypeVar("_R")
-_P = ParamSpec("_P")
-
 _LOGGER = logging.getLogger(__name__)
 
 
-def needs_session(
-    func: Callable[Concatenate[_PlexMediaPlayerT, _P], _R]
+def needs_session[_PlexMediaPlayerT: PlexMediaPlayer, **_P, _R](
+    func: Callable[Concatenate[_PlexMediaPlayerT, _P], _R],
 ) -> Callable[Concatenate[_PlexMediaPlayerT, _P], _R | None]:
     """Ensure session is available for certain attributes."""
 
@@ -117,6 +114,10 @@ def _async_add_entities(hass, registry, async_add_entities, server_id, new_entit
 class PlexMediaPlayer(MediaPlayerEntity):
     """Representation of a Plex device."""
 
+    _attr_available = False
+    _attr_should_poll = False
+    _attr_state = MediaPlayerState.IDLE
+
     def __init__(self, plex_server, device, player_source, session=None):
         """Initialize the Plex device."""
         self.plex_server = plex_server
@@ -136,9 +137,6 @@ class PlexMediaPlayer(MediaPlayerEntity):
         self._volume_level = 1  # since we can't retrieve remotely
         self._volume_muted = False  # since we can't retrieve remotely
 
-        self._attr_available = False
-        self._attr_should_poll = False
-        self._attr_state = MediaPlayerState.IDLE
         self._attr_unique_id = (
             f"{self.plex_server.machine_identifier}:{self.machine_identifier}"
         )

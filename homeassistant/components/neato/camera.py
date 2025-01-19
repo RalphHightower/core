@@ -1,4 +1,5 @@
 """Support for loading picture from Neato."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -28,12 +29,13 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up Neato camera with config entry."""
-    dev = []
     neato: NeatoHub = hass.data[NEATO_LOGIN]
     mapdata: dict[str, Any] | None = hass.data.get(NEATO_MAP_DATA)
-    for robot in hass.data[NEATO_ROBOTS]:
-        if "maps" in robot.traits:
-            dev.append(NeatoCleaningMap(neato, robot, mapdata))
+    dev = [
+        NeatoCleaningMap(neato, robot, mapdata)
+        for robot in hass.data[NEATO_ROBOTS]
+        if "maps" in robot.traits
+    ]
 
     if not dev:
         return
@@ -57,6 +59,7 @@ class NeatoCleaningMap(NeatoEntity, Camera):
         self._mapdata = mapdata
         self._available = neato is not None
         self._robot_serial: str = self.robot.serial
+        self._attr_unique_id = self.robot.serial
         self._generated_at: str | None = None
         self._image_url: str | None = None
         self._image: bytes | None = None
@@ -108,11 +111,6 @@ class NeatoCleaningMap(NeatoEntity, Camera):
         self._image_url = image_url
         self._generated_at = map_data.get("generated_at")
         self._available = True
-
-    @property
-    def unique_id(self) -> str:
-        """Return unique ID."""
-        return self._robot_serial
 
     @property
     def available(self) -> bool:

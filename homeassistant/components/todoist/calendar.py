@@ -1,4 +1,5 @@
 """Support for Todoist task management (https://todoist.com)."""
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -13,12 +14,14 @@ from todoist_api_python.models import Due, Label, Task
 import voluptuous as vol
 
 from homeassistant.components.calendar import (
-    PLATFORM_SCHEMA,
+    PLATFORM_SCHEMA as CALENDAR_PLATFORM_SCHEMA,
     CalendarEntity,
     CalendarEvent,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ID, CONF_NAME, CONF_TOKEN, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,6 +54,7 @@ from .const import (
     REMINDER_DATE,
     REMINDER_DATE_LANG,
     REMINDER_DATE_STRING,
+    SECTION_NAME,
     SERVICE_NEW_TASK,
     START,
     SUMMARY,
@@ -63,7 +67,9 @@ _LOGGER = logging.getLogger(__name__)
 NEW_TASK_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Required(CONTENT): cv.string,
+        vol.Optional(DESCRIPTION): cv.string,
         vol.Optional(PROJECT_NAME, default="inbox"): vol.All(cv.string, vol.Lower),
+        vol.Optional(SECTION_NAME): vol.All(cv.string, vol.Lower),
         vol.Optional(LABELS): cv.ensure_list_csv,
         vol.Optional(ASSIGNEE): cv.string,
         vol.Optional(PRIORITY): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
@@ -78,7 +84,7 @@ NEW_TASK_SERVICE_SCHEMA = vol.Schema(
     }
 )
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+PLATFORM_SCHEMA = CALENDAR_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_TOKEN): cv.string,
         vol.Optional(CONF_EXTRA_PROJECTS, default=[]): vol.All(
@@ -106,6 +112,23 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 SCAN_INTERVAL = timedelta(minutes=1)
 
 
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """Set up the Todoist calendar platform config entry."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    projects = await coordinator.async_get_projects()
+    labels = await coordinator.async_get_labels()
+
+    entities = []
+    for project in projects:
+        project_data: ProjectData = {CONF_NAME: project.name, CONF_ID: project.id}
+        entities.append(TodoistProjectEntity(coordinator, project_data, labels))
+
+    async_add_entities(entities)
+    async_register_services(hass, coordinator)
+
+
 async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
@@ -119,7 +142,7 @@ async def async_setup_platform(
     project_id_lookup = {}
 
     api = TodoistAPIAsync(token)
-    coordinator = TodoistCoordinator(hass, _LOGGER, SCAN_INTERVAL, api)
+    coordinator = TodoistCoordinator(hass, _LOGGER, None, SCAN_INTERVAL, api, token)
     await coordinator.async_refresh()
 
     async def _shutdown_coordinator(_: Event) -> None:
@@ -177,22 +200,71 @@ async def async_setup_platform(
 
     async_add_entities(project_devices, update_before_add=True)
 
+    async_register_services(hass, coordinator)
+
+
+def async_register_services(  # noqa: C901
+    hass: HomeAssistant, coordinator: TodoistCoordinator
+) -> None:
+    """Register services."""
+
+    if hass.services.has_service(DOMAIN, SERVICE_NEW_TASK):
+        return
+
     session = async_get_clientsession(hass)
 
-    async def handle_new_task(call: ServiceCall) -> None:
+    async def handle_new_task(call: ServiceCall) -> None:  # noqa: C901
         """Call when a user creates a new Todoist Task from Home Assistant."""
         project_name = call.data[PROJECT_NAME]
-        project_id = project_id_lookup[project_name]
+        projects = await coordinator.async_get_projects()
+        project_id: str | None = None
+        for project in projects:
+            if project_name == project.name.lower():
+                project_id = project.id
+                break
+        if project_id is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="project_invalid",
+                translation_placeholders={
+                    "project": project_name,
+                },
+            )
+
+        # Optional section within project
+        section_id: str | None = None
+        if SECTION_NAME in call.data:
+            section_name = call.data[SECTION_NAME]
+            sections = await coordinator.async_get_sections(project_id)
+            for section in sections:
+                if section_name == section.name.lower():
+                    section_id = section.id
+                    break
+            if section_id is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="section_invalid",
+                    translation_placeholders={
+                        "section": section_name,
+                        "project": project_name,
+                    },
+                )
 
         # Create the task
         content = call.data[CONTENT]
         data: dict[str, Any] = {"project_id": project_id}
 
+        if description := call.data.get(DESCRIPTION):
+            data["description"] = description
+
+        if section_id is not None:
+            data["section_id"] = section_id
+
         if task_labels := call.data.get(LABELS):
             data["labels"] = task_labels
 
         if ASSIGNEE in call.data:
-            collaborators = await api.get_collaborators(project_id)
+            collaborators = await coordinator.api.get_collaborators(project_id)
             collaborator_id_lookup = {
                 collab.name.lower(): collab.id for collab in collaborators
             }
@@ -225,7 +297,7 @@ async def async_setup_platform(
             date_format = "%Y-%m-%dT%H:%M:%S"
             data["due_datetime"] = datetime.strftime(due_date, date_format)
 
-        api_task = await api.add_task(content, **data)
+        api_task = await coordinator.api.add_task(content, **data)
 
         # @NOTE: The rest-api doesn't support reminders, this works manually using
         # the sync api, in order to keep functional parity with the component.
@@ -259,11 +331,15 @@ async def async_setup_platform(
                         "type": "reminder_add",
                         "temp_id": str(uuid.uuid1()),
                         "uuid": str(uuid.uuid1()),
-                        "args": {"item_id": api_task.id, "due": reminder_due},
+                        "args": {
+                            "item_id": api_task.id,
+                            "type": "absolute",
+                            "due": reminder_due,
+                        },
                     }
                 ]
             }
-            headers = create_headers(token=token, with_content=True)
+            headers = create_headers(token=coordinator.token, with_content=True)
             return await session.post(sync_url, headers=headers, json=reminder_data)
 
         if _reminder_due:
@@ -396,7 +472,7 @@ class TodoistProjectData:
 
         self._coordinator = coordinator
         self._name = project_data[CONF_NAME]
-        # If no ID is defined, fetch all tasks.
+        # If no ID is defined, this is a custom project.
         self._id = project_data.get(CONF_ID)
 
         # All labels the user has defined, for easy lookup.
@@ -456,6 +532,13 @@ class TodoistProjectData:
             START: dt_util.now(),
             SUMMARY: data.content,
         }
+
+        if (
+            self._project_id_whitelist
+            and data.project_id not in self._project_id_whitelist
+        ):
+            # Project isn't in `include_projects` filter.
+            return None
 
         # All task Labels (optional parameter).
         task[LABELS] = [
@@ -585,10 +668,7 @@ class TodoistProjectData:
         tasks = self._coordinator.data
         if self._id is None:
             project_task_data = [
-                task
-                for task in tasks
-                if not self._project_id_whitelist
-                or task.project_id in self._project_id_whitelist
+                task for task in tasks if self.create_todoist_task(task) is not None
             ]
         else:
             project_task_data = [task for task in tasks if task.project_id == self._id]

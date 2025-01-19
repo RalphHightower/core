@@ -1,4 +1,11 @@
 {
+  "config": {
+    "step": {
+      "user": {
+        "description": "[%key:common::config_flow::description::confirm_setup%]"
+      }
+    }
+  },
   "services": {
     "turn_on": {
       "name": "[%key:common::action::turn_on%]",

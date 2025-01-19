@@ -62,7 +62,7 @@
     },
     "clear_completed_items": {
       "name": "Clear completed items",
-      "description": "Clears completed items from the shopping list."
+      "description": "Removes completed items from the shopping list."
     },
     "sort": {
       "name": "Sort all items",
@@ -72,6 +72,13 @@
           "name": "Sort reverse",
           "description": "Whether to sort in reverse (descending) order."
         }
+      }
+    }
+  },
+  "entity": {
+    "todo": {
+      "shopping_list": {
+        "name": "[%key:component::shopping_list::title%]"
       }
     }
   }

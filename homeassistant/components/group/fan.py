@@ -1,4 +1,5 @@
 """Platform allowing several fans to be grouped into one fan."""
+
 from __future__ import annotations
 
 from functools import reduce
@@ -13,8 +14,8 @@ from homeassistant.components.fan import (
     ATTR_OSCILLATING,
     ATTR_PERCENTAGE,
     ATTR_PERCENTAGE_STEP,
-    DOMAIN,
-    PLATFORM_SCHEMA,
+    DOMAIN as FAN_DOMAIN,
+    PLATFORM_SCHEMA as FAN_PLATFORM_SCHEMA,
     SERVICE_OSCILLATE,
     SERVICE_SET_DIRECTION,
     SERVICE_SET_PERCENTAGE,
@@ -25,7 +26,6 @@ from homeassistant.components.fan import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
     ATTR_SUPPORTED_FEATURES,
     CONF_ENTITIES,
@@ -40,18 +40,15 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import GroupEntity
-from .util import (
-    attribute_equal,
-    most_frequent_attribute,
-    reduce_attribute,
-    states_equal,
-)
+from .entity import GroupEntity
+from .util import attribute_equal, most_frequent_attribute, reduce_attribute
 
 SUPPORTED_FLAGS = {
     FanEntityFeature.SET_SPEED,
     FanEntityFeature.DIRECTION,
     FanEntityFeature.OSCILLATE,
+    FanEntityFeature.TURN_OFF,
+    FanEntityFeature.TURN_ON,
 }
 
 DEFAULT_NAME = "Fan Group"
@@ -59,9 +56,9 @@ DEFAULT_NAME = "Fan Group"
 # No limit on parallel updates to enable a group calling another group
 PARALLEL_UPDATES = 0
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+PLATFORM_SCHEMA = FAN_PLATFORM_SCHEMA.extend(
     {
-        vol.Required(CONF_ENTITIES): cv.entities_domain(DOMAIN),
+        vol.Required(CONF_ENTITIES): cv.entities_domain(FAN_DOMAIN),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_UNIQUE_ID): cv.string,
     }
@@ -97,7 +94,9 @@ async def async_setup_entry(
 
 
 @callback
-def async_create_preview_fan(name: str, validated_config: dict[str, Any]) -> FanGroup:
+def async_create_preview_fan(
+    hass: HomeAssistant, name: str, validated_config: dict[str, Any]
+) -> FanGroup:
     """Create a preview sensor."""
     return FanGroup(
         None,
@@ -110,7 +109,6 @@ class FanGroup(GroupEntity, FanEntity):
     """Representation of a FanGroup."""
 
     _attr_available: bool = False
-    _attr_assumed_state: bool = True
 
     def __init__(self, unique_id: str | None, name: str, entities: list[str]) -> None:
         """Initialize a FanGroup entity."""
@@ -204,18 +202,22 @@ class FanGroup(GroupEntity, FanEntity):
         if percentage is not None:
             await self.async_set_percentage(percentage)
             return
-        await self._async_call_all_entities(SERVICE_TURN_ON)
+        await self._async_call_supported_entities(
+            SERVICE_TURN_ON, FanEntityFeature.TURN_ON, {}
+        )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the fans off."""
-        await self._async_call_all_entities(SERVICE_TURN_OFF)
+        await self._async_call_supported_entities(
+            SERVICE_TURN_OFF, FanEntityFeature.TURN_OFF, {}
+        )
 
     async def _async_call_supported_entities(
         self, service: str, support_flag: int, data: dict[str, Any]
     ) -> None:
         """Call a service with all entities."""
         await self.hass.services.async_call(
-            DOMAIN,
+            FAN_DOMAIN,
             service,
             {**data, ATTR_ENTITY_ID: self._fans[support_flag]},
             blocking=True,
@@ -225,7 +227,7 @@ class FanGroup(GroupEntity, FanEntity):
     async def _async_call_all_entities(self, service: str) -> None:
         """Call a service with all entities."""
         await self.hass.services.async_call(
-            DOMAIN,
+            FAN_DOMAIN,
             service,
             {ATTR_ENTITY_ID: self._entity_ids},
             blocking=True,
@@ -243,19 +245,16 @@ class FanGroup(GroupEntity, FanEntity):
         """Set an attribute based on most frequent supported entities attributes."""
         states = self._async_states_by_support_flag(flag)
         setattr(self, attr, most_frequent_attribute(states, entity_attr))
-        self._attr_assumed_state |= not attribute_equal(states, entity_attr)
 
     @callback
     def async_update_group_state(self) -> None:
         """Update state and attributes."""
-        self._attr_assumed_state = False
 
         states = [
             state
             for entity_id in self._entity_ids
             if (state := self.hass.states.get(entity_id)) is not None
         ]
-        self._attr_assumed_state |= not states_equal(states)
 
         # Set group as unavailable if all members are unavailable or missing
         self._attr_available = any(state.state != STATE_UNAVAILABLE for state in states)
@@ -274,9 +273,6 @@ class FanGroup(GroupEntity, FanEntity):
             FanEntityFeature.SET_SPEED
         )
         self._percentage = reduce_attribute(percentage_states, ATTR_PERCENTAGE)
-        self._attr_assumed_state |= not attribute_equal(
-            percentage_states, ATTR_PERCENTAGE
-        )
         if (
             percentage_states
             and percentage_states[0].attributes.get(ATTR_PERCENTAGE_STEP)
@@ -300,7 +296,4 @@ class FanGroup(GroupEntity, FanEntity):
             reduce(
                 ior, [feature for feature in SUPPORTED_FLAGS if self._fans[feature]], 0
             )
-        )
-        self._attr_assumed_state |= any(
-            state.attributes.get(ATTR_ASSUMED_STATE) for state in states
         )

@@ -1,4 +1,5 @@
 """Support for LG WebOS TV notification service."""
+
 from __future__ import annotations
 
 import logging
@@ -14,6 +15,8 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from .const import ATTR_CONFIG_ENTRY_ID, DATA_CONFIG_ENTRY, DOMAIN, WEBOSTV_EXCEPTIONS
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES = 0
 
 
 async def async_get_service(

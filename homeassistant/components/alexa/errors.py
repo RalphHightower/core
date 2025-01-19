@@ -1,4 +1,5 @@
 """Alexa related errors."""
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -88,6 +89,13 @@ class AlexaUnsupportedThermostatModeError(AlexaError):
 
     namespace = "Alexa.ThermostatController"
     error_type = "UNSUPPORTED_THERMOSTAT_MODE"
+
+
+class AlexaUnsupportedThermostatTargetStateError(AlexaError):
+    """Class to represent unsupported climate target state error."""
+
+    namespace = "Alexa.ThermostatController"
+    error_type = "INVALID_TARGET_STATE"
 
 
 class AlexaTempRangeError(AlexaError):

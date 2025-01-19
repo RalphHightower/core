@@ -1,4 +1,5 @@
 """Support for using humidifier with ecobee thermostats."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -44,6 +45,10 @@ class EcobeeHumidifier(HumidifierEntity):
     """A humidifier class for an ecobee thermostat with humidifier attached."""
 
     _attr_supported_features = HumidifierEntityFeature.MODES
+    _attr_available_modes = [MODE_OFF, MODE_AUTO, MODE_MANUAL]
+    _attr_device_class = HumidifierDeviceClass.HUMIDIFIER
+    _attr_min_humidity = DEFAULT_MIN_HUMIDITY
+    _attr_max_humidity = DEFAULT_MAX_HUMIDITY
     _attr_has_entity_name = True
     _attr_name = None
 
@@ -91,29 +96,9 @@ class EcobeeHumidifier(HumidifierEntity):
             self._last_humidifier_on_mode = self.mode
 
     @property
-    def available_modes(self):
-        """Return the list of available modes."""
-        return [MODE_OFF, MODE_AUTO, MODE_MANUAL]
-
-    @property
-    def device_class(self):
-        """Return the device class type."""
-        return HumidifierDeviceClass.HUMIDIFIER
-
-    @property
     def is_on(self):
         """Return True if the humidifier is on."""
         return self.mode != MODE_OFF
-
-    @property
-    def max_humidity(self):
-        """Return the maximum humidity."""
-        return DEFAULT_MAX_HUMIDITY
-
-    @property
-    def min_humidity(self):
-        """Return the minimum humidity."""
-        return DEFAULT_MIN_HUMIDITY
 
     @property
     def mode(self):
@@ -124,6 +109,14 @@ class EcobeeHumidifier(HumidifierEntity):
     def target_humidity(self) -> int:
         """Return the desired humidity set point."""
         return int(self.thermostat["runtime"]["desiredHumidity"])
+
+    @property
+    def current_humidity(self) -> int | None:
+        """Return the current humidity."""
+        try:
+            return int(self.thermostat["runtime"]["actualHumidity"])
+        except KeyError:
+            return None
 
     def set_mode(self, mode):
         """Set humidifier mode (auto, off, manual)."""
